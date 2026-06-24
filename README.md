@@ -34,5 +34,4 @@ Uygulama, sistemler üzerinde kurulum gerektirmeden çalışabilmesi için tek b
 5. Verileri saklamak için **"Excel'e Aktar"** butonuna tıklayın; uygulama bulunduğunuz dizine raporu kaydedecektir.
 
 ---
-*Geliştirici: Vedat*
-*Staj Projesi - Tüm aşamalar başarıyla tamamlanmıştır.*
+
