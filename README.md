@@ -1,5 +1,9 @@
 # PC Envanter Analiz Sistemi 💻📊
 
+<p align="center">
+  <img src="arayuz_tasarimi.png" alt="PC Envanter Analiz Sistemi Arayüzü">
+</p>
+
 Bu proje, kurum içi bilgisayarların donanım, yazılım ve ağ özelliklerini tek bir tıkla analiz edebilen, raporlayan ve Excel formatında dışa aktarabilen modern bir masaüstü uygulamasıdır. Staj projesi kapsamında geliştirilmiştir.
 
 ## 🎯 Proje Amacı
