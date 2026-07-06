@@ -37,6 +37,7 @@ from sistem_bilgisi import (
     ram_bilgisi,
     disk_bilgisi,
     ip_durumu,
+    ag_uyeligi,
     yuklu_program_kontrol,
     standart_kontrol,
     excel_raporu_kaydet,
@@ -80,38 +81,42 @@ FONT = {
 
 def _analiz_yap() -> tuple:
     """Tum kontrolleri calistirir; ham veri demetini dondurur."""
-    ram      = ram_bilgisi()
-    cpu      = cpu_bilgisi()
-    isletim  = isletim_sistemi_bilgisi()
-    diskler  = disk_bilgisi()
+    ram        = ram_bilgisi()
+    cpu        = cpu_bilgisi()
+    isletim    = isletim_sistemi_bilgisi()
+    diskler    = disk_bilgisi()
     programlar = yuklu_program_kontrol()
-    ip       = ip_durumu()
+    ip         = ip_durumu()
+    uyelik     = ag_uyeligi()
     disk_yuzde = next(
         (d["Doluluk Oranı (%)"] for d in diskler if d["Bağlama Noktası"] == "C:\\"),
         0.0,
     )
     uyarilar = standart_kontrol(
-        ram_gb       = ram["Toplam RAM (GB)"],
-        office_durum = programlar["Microsoft Office"],
-        disk_yuzde   = disk_yuzde,
+        ram_gb           = ram["Toplam RAM (GB)"],
+        office_durum     = programlar["Microsoft Office"],
+        disk_yuzde       = disk_yuzde,
+        teamviewer_durum = programlar.get("TeamViewer", ""),
+        ip               = ip,
+        uyelik           = uyelik,
     )
-    return ram, cpu, isletim, diskler, programlar, ip, uyarilar
+    return ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar
 
 
-def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyarilar) -> str:
+def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar) -> str:
     """Analiz sonuclarini formatlı metin olarak dondurur."""
     zaman = datetime.datetime.now().strftime("%d.%m.%Y  %H:%M:%S")
     s = []
     sep  = "=" * 56
     sep2 = "-" * 56
-    sep3 = "*" * 56   # program bolumu icin daha belirgin ayrac
+    sep3 = "*" * 56
 
     s.append(sep)
     s.append(f"  PC ENVANTER RAPORU   |   {zaman}")
     s.append(f"  Bilgisayar : {bilgisayar_adi()}")
     s.append(sep)
 
-    # ── YUKLU PROGRAM KONTROLU (en uste, vurgulu) ────────────────────
+    # ── YUKLU PROGRAM KONTROLU (en uste, vurgulu)
     s.append("")
     s.append(sep3)
     s.append("  *** YUKLU PROGRAM KONTROLU ***")
@@ -121,30 +126,31 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyarilar) -> str:
         s.append(f"  {isaretci}  {prog:<20}  {durum}")
     s.append(sep3)
 
-    # ── IP / AG DURUMU ───────────────────────────────────────────────
+    # ── IP / AG DURUMU
     s.append("\n  [AG / IP DURUMU]")
     s.append(sep2)
     s.append(f"  IP Yapilandirmasi   : {ip}")
+    s.append(f"  Ag Uyeligi          : {uyelik}")
 
-    # ── Isletim Sistemi ────────────────────────────────────────────────
+    # ── Isletim Sistemi
     s.append("\n  [ISLETIM SISTEMI]")
     s.append(sep2)
     for k, v in isletim.items():
         s.append(f"  {k:<24}: {v}")
 
-    # ── CPU ────────────────────────────────────────────────────────
+    # ── CPU
     s.append("\n  [CPU]")
     s.append(sep2)
     for k, v in cpu.items():
         s.append(f"  {k:<30}: {v}")
 
-    # ── RAM ────────────────────────────────────────────────────────
+    # ── RAM
     s.append("\n  [RAM]")
     s.append(sep2)
     for k, v in ram.items():
         s.append(f"  {k:<24}: {v}")
 
-    # ── Disk ────────────────────────────────────────────────────────
+    # ── Disk
     s.append("\n  [DISK]")
     s.append(sep2)
     for i, d in enumerate(diskler, 1):
@@ -152,7 +158,7 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyarilar) -> str:
         for k, v in d.items():
             s.append(f"    {k:<22}: {v}")
 
-    # ── Degerlendirme ───────────────────────────────────────────────
+    # ── Degerlendirme
     s.append("\n  [DEGERLENDIRME / UYARILAR]")
     s.append(sep2)
     if uyarilar:
@@ -204,6 +210,12 @@ class OzetKart(ctk.CTkFrame):
             text_color=RENK["text_dim"], anchor="w",
         ).pack(anchor="w")
 
+        self._alt_lbl = ctk.CTkLabel(
+            ic, text="", font=("Segoe UI", 10),
+            text_color=RENK["text_dim"], anchor="w", justify="left"
+        )
+        self._alt_lbl.pack(anchor="w", pady=(2, 0))
+
     def guncelle(self, deger: str):
         self._deger_lbl.configure(text=deger)
 
@@ -233,8 +245,10 @@ class PCAnalizApp(ctk.CTk):
         self._son_diskler: list    = []
         self._son_programlar: dict = {}
         self._son_ip: str          = ""
+        self._son_uyelik: str      = ""
         self._son_uyarilar: list   = []
         self._analiz_yapildi       = False
+        self._ip_blink_aktif       = False   # Statik IP yanip sonme durumu
 
         self._arayuz_olustur()
 
@@ -370,7 +384,7 @@ class PCAnalizApp(ctk.CTk):
         # ── Buton satiri ─────────────────────────────────────────────────────
         btn_satiri = ctk.CTkFrame(ana, fg_color="transparent")
         btn_satiri.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        btn_satiri.grid_columnconfigure((0, 1), weight=1)
+        btn_satiri.grid_columnconfigure((0, 1, 2), weight=1)
 
         self._btn_analiz = ctk.CTkButton(
             btn_satiri,
@@ -382,7 +396,19 @@ class PCAnalizApp(ctk.CTk):
             corner_radius=12,
             command=self._analiz_baslat,
         )
-        self._btn_analiz.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self._btn_analiz.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self._btn_sifirla = ctk.CTkButton(
+            btn_satiri,
+            text="  ⟳   Sistemi Sıfırla",
+            font=FONT["btn"],
+            fg_color="#4f5b66",
+            hover_color="#343d46",
+            height=46,
+            corner_radius=12,
+            command=self._sistemi_sifirla,
+        )
+        self._btn_sifirla.grid(row=0, column=1, sticky="ew", padx=4)
 
         self._btn_excel = ctk.CTkButton(
             btn_satiri,
@@ -395,7 +421,7 @@ class PCAnalizApp(ctk.CTk):
             state="disabled",
             command=self._excel_aktar,
         )
-        self._btn_excel.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self._btn_excel.grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
     def _durum_cubugu_olustur(self):
         """Alt durum cubugu."""
@@ -441,6 +467,68 @@ class PCAnalizApp(ctk.CTk):
         self._metin.insert("end", icerik)
         self._metin.configure(state="disabled")
 
+    def _sistemi_sifirla(self):
+        """Arayuzu varsayilan haline dondurur."""
+        # Yanip sonme varsa durdur
+        self._ip_blink_aktif = False
+
+        self._analiz_yapildi = False
+        self._son_ram.clear()
+        self._son_cpu.clear()
+        self._son_isletim.clear()
+        self._son_diskler.clear()
+        self._son_programlar.clear()
+        self._son_ip = ""
+        self._son_uyelik = ""
+        self._son_uyarilar.clear()
+
+        # Metin kutusu sifirlama
+        self._metin_yaz(
+            "  Analiz başlatmak için  'Sistemi Analiz Et'  butonuna tıklayın.\n\n"
+            "  Tüm donanım, yazılım ve güvenlik kontrolleri arka planda\n"
+            "  çalıştırılacak ve sonuçlar burada görüntülenecektir.\n"
+        )
+        
+        # Kartlari sifirlama
+        self._kart_bilgisayar.guncelle("—")
+        self._kart_bilgisayar._alt_lbl.configure(text="")
+        
+        self._kart_ram.guncelle("—")
+        self._kart_ram._alt_lbl.configure(text="")
+        
+        self._kart_disk.guncelle("—")
+        self._kart_disk._deger_lbl.configure(text_color=RENK["warning"])
+        self._kart_disk._alt_lbl.configure(text="")
+        
+        # IP kartini sifirla ve cerceve rengini orijinaline dondur
+        self._kart_ip.guncelle("—")
+        self._kart_ip._deger_lbl.configure(text_color=RENK["purple"])
+        self._kart_ip._serit.configure(bg=RENK["purple"])
+        self._kart_ip.configure(border_color=RENK["border"])
+        self._kart_ip._alt_lbl.configure(text="")
+        
+        self._kart_uyari.guncelle("—")
+        self._kart_uyari._deger_lbl.configure(text_color=RENK["danger"])
+        self._kart_uyari._alt_lbl.configure(text="")
+
+        # Butonlar ve Durum
+        self._btn_analiz.configure(state="normal", text="  ▶   Sistemi Analiz Et")
+        self._btn_excel.configure(state="disabled", text="  ⬇   Excel'e Aktar")
+        self._rozet_guncelle("Hazır", RENK["border"])
+        self._durum_guncelle("Hazır.", RENK["text_dim"])
+
+    def _ip_kart_yanip_sonsun(self, acik: bool = True):
+        """Statik IP algilandiğında IP kartinin cercevesini 500ms'de bir kirmiziyla yanip sondurur."""
+        if not self._ip_blink_aktif:
+            # Yanip sonme durduruldu, kartı normal renge geri al
+            self._kart_ip.configure(border_color=RENK["border"])
+            return
+        if acik:
+            self._kart_ip.configure(border_color=RENK["danger"])
+        else:
+            self._kart_ip.configure(border_color=RENK["border"])
+        self.after(500, self._ip_kart_yanip_sonsun, not acik)
+
     # ── Analiz ──────────────────────────────────────────────────────────────
 
     def _analiz_baslat(self):
@@ -465,18 +553,18 @@ class PCAnalizApp(ctk.CTk):
         if _PYTHONCOM:
             pythoncom.CoInitialize()
         try:
-            ram, cpu, isletim, diskler, programlar, ip, uyarilar = _analiz_yap()
+            ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar = _analiz_yap()
             self._son_ram        = ram
             self._son_cpu        = cpu
             self._son_isletim    = isletim
             self._son_diskler    = diskler
             self._son_programlar = programlar
             self._son_ip         = ip
+            self._son_uyelik     = uyelik
             self._son_uyarilar   = uyarilar
             self._analiz_yapildi = True
-            metin = _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyarilar)
-            # UI güncellemelerini ana thread'de yap (after ile)
-            self.after(0, self._analiz_bitti, metin, ram, diskler, ip, uyarilar)
+            metin = _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
+            self.after(0, self._analiz_bitti, metin, ram, diskler, ip, uyelik, uyarilar)
         except Exception as hata:
             self.after(0, self._analiz_hata, str(hata))
         finally:
@@ -484,12 +572,19 @@ class PCAnalizApp(ctk.CTk):
                 pythoncom.CoUninitialize()
 
     def _analiz_bitti(self, metin: str, ram: dict,
-                      diskler: list, ip: str, uyarilar: list):
+                      diskler: list, ip: str, uyelik: str, uyarilar: list):
         """Ana thread'de UI'yi gunceller."""
         self._metin_yaz(metin)
 
         # Ozet kartlari guncelle
-        self._kart_bilgisayar.guncelle(bilgisayar_adi())
+        # Bilgisayar kartı: ad + ag uyeligi alt bilgisi
+        pc_adi = bilgisayar_adi()
+        # Uyeligin kisa halini al (ilk kelime yeterli degil; tum degeri goster)
+        uyelik_kisa = uyelik.split(":", 1)[-1].strip() if ":" in uyelik else uyelik
+        self._kart_bilgisayar.guncelle(pc_adi)
+        # Alt etiket guncelle (varsa)
+        if hasattr(self._kart_bilgisayar, "_alt_lbl"):
+            self._kart_bilgisayar._alt_lbl.configure(text=uyelik_kisa)
         self._kart_ram.guncelle(f"{ram.get('Toplam RAM (GB)', '?')} GB")
 
         disk_yuzde = next(
@@ -500,24 +595,50 @@ class PCAnalizApp(ctk.CTk):
         self._kart_disk.guncelle(f"%{disk_yuzde}")
         self._kart_disk._deger_lbl.configure(text_color=disk_renk)
 
-        # IP kartı – Statik ise turuncu, DHCP ise mor
-     
+        # IP kartı – Statik ise turuncu + yanip sonme, DHCP ise mor
         if "Statik" in ip:
-            ip_renk  = RENK["orange"]
-            ip_kisa  = "Statik IP"
+            ip_renk = RENK["orange"]
+            ip_kisa = "Statik IP"
         elif "DHCP" in ip:
-            ip_renk  = RENK["purple"]
-            ip_kisa  = "Otomatik (DHCP)"
+            ip_renk = RENK["purple"]
+            ip_kisa = "Otomatik (DHCP)"
         else:
-            ip_renk  = RENK["text_dim"]
-            ip_kisa  = "Bilinmiyor"
+            ip_renk = RENK["text_dim"]
+            ip_kisa = "Bilinmiyor"
         self._kart_ip.guncelle(ip_kisa)
         self._kart_ip._deger_lbl.configure(text_color=ip_renk)
         self._kart_ip._serit.configure(bg=ip_renk)
 
+        # Statik IP ise yanip sonmeyi baslat
+        if "Statik" in ip:
+            self._ip_blink_aktif = True
+            self._ip_kart_yanip_sonsun(acik=True)
+        else:
+            self._ip_blink_aktif = False
+            self._kart_ip.configure(border_color=RENK["border"])
+
         uyari_renk = RENK["danger"] if uyarilar else RENK["green"]
         self._kart_uyari.guncelle(str(len(uyarilar)))
         self._kart_uyari._deger_lbl.configure(text_color=uyari_renk)
+        
+        # Uyari karti: tum uyarilari kisalt ve listele (sinir yok)
+        if uyarilar:
+            def kisa_uyari(u: str) -> str:
+                u = u.replace("[-]", "").replace("[!]", "").strip()
+                if ":" in u:
+                    u = u.split(":")[0].strip()
+                return f"• {u}"
+            ozet = "\n".join([kisa_uyari(u) for u in uyarilar])
+            self._kart_uyari._alt_lbl.configure(
+                text=ozet, text_color=RENK["danger"],
+                font=("Segoe UI", 9),
+            )
+        else:
+            self._kart_uyari._alt_lbl.configure(
+                text="Sorun Yok", text_color=RENK["green"],
+                font=("Segoe UI", 9),
+            )
+
 
         # Buton ve rozet
         self._btn_analiz.configure(state="normal",
@@ -555,13 +676,14 @@ class PCAnalizApp(ctk.CTk):
     def _excel_thread(self):
         try:
             yol = excel_raporu_kaydet(
-                ram             = self._son_ram,
-                cpu             = self._son_cpu,
-                isletim_sistemi = self._son_isletim,
-                diskler         = self._son_diskler,
-                programlar      = self._son_programlar,
-                uyarilar        = self._son_uyarilar,
-                ip              = self._son_ip,
+                ram              = self._son_ram,
+                cpu              = self._son_cpu,
+                isletim_sistemi  = self._son_isletim,
+                diskler          = self._son_diskler,
+                programlar       = self._son_programlar,
+                uyarilar         = self._son_uyarilar,
+                ip               = self._son_ip,
+                ag_uyeligi_bilgi = self._son_uyelik,
             )
             self.after(0, self._excel_bitti, yol)
         except Exception as hata:

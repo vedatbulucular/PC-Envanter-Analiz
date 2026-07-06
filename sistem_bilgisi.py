@@ -87,9 +87,7 @@ def ip_durumu() -> str:
     """
     try:
         c = wmi.WMI()
-        # IP atanmış aktif bağdaştırıcıları bul
         for interface in c.Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            # İlk aktif olanı baz alıyoruz
             if interface.DHCPEnabled:
                 return "Otomatik IP (DHCP)"
             else:
@@ -97,6 +95,23 @@ def ip_durumu() -> str:
         return "Bilinmiyor"
     except Exception as e:
         return f"Hata Olustu {str(e)}"
+
+
+def ag_uyeligi() -> str:
+    """
+    WMI Win32_ComputerSystem ile bilgisayarin Domain veya Workgroup
+    uyeligini sorgular.
+    """
+    try:
+        c = wmi.WMI()
+        for sistem in c.Win32_ComputerSystem():
+            if getattr(sistem, "PartOfDomain", False):
+                return f"Etki Alani: {getattr(sistem, 'Domain', 'Bilinmiyor')}"
+            else:
+                return f"Calisma Grubu: {getattr(sistem, 'Workgroup', 'Bilinmiyor')}"
+        return "Bilinmiyor"
+    except Exception as e:
+        return f"Hata Olustu: {str(e)}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -144,6 +159,24 @@ def office_kurulu_mu() -> str:
     """Microsoft Office'in kurulu olup olmadigini kontrol eder."""
     return "VAR" if _kayit_defterinde_ara(["Microsoft Office", "Microsoft 365", "Office 365"]) else "YOK"
 
+def teamviewer_kurulu_mu() -> str:
+    """
+    TeamViewer'in kurulu olup olmadigini kayit defteri ve
+    varsayilan kurulum yolu uzerinden kontrol eder.
+    """
+    # Oncelikle kayit defterinde ara
+    if _kayit_defterinde_ara(["TeamViewer"]):
+        return "VAR"
+    # Ikincil kontrol: varsayilan kurulum dizinleri
+    kurulum_yollari = [
+        r"C:\Program Files\TeamViewer\TeamViewer.exe",
+        r"C:\Program Files (x86)\TeamViewer\TeamViewer.exe",
+    ]
+    for yol in kurulum_yollari:
+        if os.path.exists(yol):
+            return "VAR"
+    return "YOK"
+
 def antivirusler() -> dict:
     """
     WMI üzerinden kayitli antivirusleri sorgular.
@@ -183,6 +216,7 @@ def yuklu_program_kontrol() -> dict:
     return {
         "Google Chrome"    : chrome_kurulu_mu(),
         "Microsoft Office" : office_kurulu_mu(),
+        "TeamViewer"       : teamviewer_kurulu_mu(),
         "Antivirus"        : av_ozet,
     }
 
@@ -194,14 +228,46 @@ def yuklu_program_kontrol() -> dict:
 RAM_ESIK_GB       = 8.0
 DISK_ESIK_YUZDE  = 85.0
 
-def standart_kontrol(ram_gb: float, office_durum: str, disk_yuzde: float) -> list[str]:
+def standart_kontrol(
+    ram_gb: float,
+    office_durum: str,
+    disk_yuzde: float,
+    teamviewer_durum: str = "",
+    ip: str = "",
+    uyelik: str = "",
+) -> list[str]:
+    """
+    Donanim, yazilim ve ag kriterlerini degerlendirerek uyari listesi dondurur.
+
+    Mevcut kurallar:
+      - RAM < 8 GB
+      - Microsoft Office yok
+      - Disk dolulugu > %85
+    Yeni eklenen kurallar:
+      - TeamViewer yok
+      - Statik / Manuel IP konfigurasyonu
+      - Cihaz etki alani (Domain) disinda (Workgroup)
+    """
     uyarilar: list[str] = []
+
+    # ── Mevcut Donanim & Yazilim Kurallari ───────────────────────────────────
     if ram_gb < RAM_ESIK_GB:
         uyarilar.append(f"[!] RAM Yukseltme Gerekli  : Mevcut {ram_gb} GB < Esik {RAM_ESIK_GB} GB")
     if "YOK" in office_durum.upper():
         uyarilar.append("[!] Eksik Yazilim          : Microsoft Office kurulu degil")
     if disk_yuzde > DISK_ESIK_YUZDE:
         uyarilar.append(f"[!] Disk Dikkat            : Doluluk {disk_yuzde}% > Esik {DISK_ESIK_YUZDE}%")
+
+    # ── Yeni Yazilim Kurali: TeamViewer ──────────────────────────────────────
+    if teamviewer_durum and "YOK" in teamviewer_durum.upper():
+        uyarilar.append("[-] TeamViewer yüklü değil!")
+
+    # ── Yeni Ag Kurallari ────────────────────────────────────────────────────
+    if ip and "Statik" in ip:
+        uyarilar.append("[-] Cihazda Statik IP yapılandırması mevcut!")
+    if uyelik and ("Calisma Grubu" in uyelik or "Workgroup" in uyelik.lower()):
+        uyarilar.append("[-] Cihaz etki alanına (Domain) bağlı değil!")
+
     return uyarilar
 
 
@@ -212,6 +278,7 @@ def standart_kontrol(ram_gb: float, office_durum: str, disk_yuzde: float) -> lis
 def excel_raporu_kaydet(
     ram: dict, cpu: dict, isletim_sistemi: dict, diskler: list[dict],
     programlar: dict, uyarilar: list[str], ip: str = "",
+    ag_uyeligi_bilgi: str = "",
     cikti_dizini: str = ".", dosya_adi: str = ""
 ) -> str:
     zaman_damgasi = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -225,6 +292,7 @@ def excel_raporu_kaydet(
         {"Kategori": "Rapor Zamani",       "Bilgi": zaman_damgasi},
         {"Kategori": "Bilgisayar Adi",     "Bilgi": bilgisayar},
         {"Kategori": "IP Durumu",          "Bilgi": ip if ip else "Bilinmiyor"},
+        {"Kategori": "Ag Uyeligi",         "Bilgi": ag_uyeligi_bilgi if ag_uyeligi_bilgi else "Bilinmiyor"},
         {"Kategori": "Isletim Sistemi",    "Bilgi": isletim_sistemi.get("Sistem", "")},
         {"Kategori": "OS Surumu",          "Bilgi": isletim_sistemi.get("Sürüm", "")},
         {"Kategori": "Mimari",             "Bilgi": isletim_sistemi.get("Mimari", "")},
@@ -311,7 +379,9 @@ def raporu_yazdir() -> None:
     print("\n[AG / IP DURUMU]")
     print("-" * 40)
     ip = ip_durumu()
+    uyelik = ag_uyeligi()
     print(f"  IP Yapılandırması : {ip}")
+    print(f"  Ag Uyeligi        : {uyelik}")
 
     print("\n[DEGERLENDIRME / UYARILAR]")
     print("-" * 40)
@@ -320,9 +390,12 @@ def raporu_yazdir() -> None:
     disk_yuzde  = next((d["Doluluk Oranı (%)"] for d in disk_veri if d["Bağlama Noktası"] == "C:\\"), 0.0)
     
     uyarilar = standart_kontrol(
-        ram_gb       = ram_veri["Toplam RAM (GB)"],
-        office_durum = programlar["Microsoft Office"],
-        disk_yuzde   = disk_yuzde,
+        ram_gb           = ram_veri["Toplam RAM (GB)"],
+        office_durum     = programlar["Microsoft Office"],
+        disk_yuzde       = disk_yuzde,
+        teamviewer_durum = programlar.get("TeamViewer", ""),
+        ip               = ip,
+        uyelik           = uyelik,
     )
     if uyarilar:
         for uyari in uyarilar:
@@ -334,13 +407,14 @@ def raporu_yazdir() -> None:
     print("-" * 40)
     print("  Rapor olusturuluyor...")
     kaydedilen_yol = excel_raporu_kaydet(
-        ram             = ram_veri,
-        cpu             = cpu_bilgisi(),
-        isletim_sistemi = isletim_sistemi_bilgisi(),
-        diskler         = disk_veri,
-        programlar      = programlar,
-        uyarilar        = uyarilar,
-        ip              = ip,
+        ram              = ram_veri,
+        cpu              = cpu_bilgisi(),
+        isletim_sistemi  = isletim_sistemi_bilgisi(),
+        diskler          = disk_veri,
+        programlar       = programlar,
+        uyarilar         = uyarilar,
+        ip               = ip,
+        ag_uyeligi_bilgi = uyelik,
     )
     print(f"  [OK] Rapor kaydedildi: {kaydedilen_yol}")
     print(f"\n{ayrac}\n")
