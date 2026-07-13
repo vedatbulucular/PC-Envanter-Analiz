@@ -222,47 +222,50 @@ def teamviewer_kurulu_mu() -> str:
             return "VAR"
     return "YOK"
 
-def antivirusler() -> dict:
+def bitdefender_kurulu_mu() -> str:
     """
-    WMI üzerinden kayitli antivirusleri sorgular.
+    Kurumsal standart antivirüs olan 'Bitdefender Endpoint Security Tools'
+    programinin kurulu olup olmadigini kontrol eder.
+    Oncelik sirasi:
+      1. Kayit defteri (tum Hive'lar ve Uninstall anahtarlari)
+      2. Bilinen kurulum dizinleri
+      3. WMI SecurityCenter2 (aktif urun adi eslesimi)
     """
-    sonuclar: dict = {}
+    ARAMA_KELIMELERI = ["Bitdefender Endpoint", "Bitdefender Endpoint Security"]
+    KURULUM_YOLLARI = [
+        r"C:\Program Files\Bitdefender\Endpoint Security\EPSecurityService.exe",
+        r"C:\Program Files\Bitdefender\Bitdefender Endpoint Security\EPSecurityService.exe",
+        r"C:\Program Files (x86)\Bitdefender\Endpoint Security\EPSecurityService.exe",
+    ]
 
-    # -- Kayitli 3. parti antivirusler (SecurityCenter2 namespace) ----------
+    # 1. Kayit defteri kontrolu
+    if _kayit_defterinde_ara(ARAMA_KELIMELERI):
+        return "VAR"
+
+    # 2. Kurulum dizini kontrolu
+    for yol in KURULUM_YOLLARI:
+        if os.path.exists(yol):
+            return "VAR"
+
+    # 3. WMI SecurityCenter2 kontrolu
     try:
         c_sc = wmi.WMI(namespace=r"root\SecurityCenter2")
         for av in c_sc.AntiVirusProduct():
-            ad = av.displayName.strip()
-            if ad and ad.lower() != "windows defender":
-                sonuclar[ad] = "VAR"
+            ad = str(getattr(av, "displayName", "") or "").strip().lower()
+            if "bitdefender" in ad:
+                return "VAR"
     except Exception:
-        pass  # Admin yetkisi yoksa veya WMI bozuksa atla
+        pass
 
-    # -- Windows Defender durumu ---------------------------------------------
-    try:
-        c_def = wmi.WMI(namespace=r"root\Microsoft\Windows\Defender")
-        defender_status = c_def.MSFT_MpComputerStatus()[0]
-        if getattr(defender_status, "AntivirusEnabled", False):
-            sonuclar["Windows Defender"] = "VAR (Aktif)"
-        else:
-            sonuclar["Windows Defender"] = "VAR (Devre Disi)"
-    except Exception:
-        sonuclar["Windows Defender"] = "YOK / Erisilemedi (Yetki Eksik)"
+    return "YOK"
 
-    return sonuclar
 
 def yuklu_program_kontrol() -> dict:
-    av = antivirusler()
-    if av:
-        av_ozet = ", ".join(f"{k}: {v}" for k, v in av.items())
-    else:
-        av_ozet = "YOK / Tespit Edilemedi"
-
     return {
-        "Google Chrome"    : chrome_kurulu_mu(),
-        "Microsoft Office" : office_kurulu_mu(),
-        "TeamViewer"       : teamviewer_kurulu_mu(),
-        "Antivirus"        : av_ozet,
+        "Google Chrome"     : chrome_kurulu_mu(),
+        "Microsoft Office"  : office_kurulu_mu(),
+        "TeamViewer"        : teamviewer_kurulu_mu(),
+        "Antivirus"         : bitdefender_kurulu_mu(),
     }
 
 
@@ -280,38 +283,41 @@ def standart_kontrol(
     teamviewer_durum: str = "",
     ip: str = "",
     uyelik: str = "",
+    antivirus_durum: str = "",
 ) -> list[str]:
     """
     Donanim, yazilim ve ag kriterlerini degerlendirerek uyari listesi dondurur.
 
-    Mevcut kurallar:
+    Kurallar:
       - RAM < 8 GB
       - Microsoft Office yok
       - Disk dolulugu > %85
-    Yeni eklenen kurallar:
       - TeamViewer yok
+      - Bitdefender Endpoint Security Tools yok
       - Statik / Manuel IP konfigurasyonu
       - Cihaz etki alani (Domain) disinda (Workgroup)
     """
     uyarilar: list[str] = []
 
-    # ── Mevcut Donanim & Yazilim Kurallari ───────────────────────────────────
+    # ── Donanim ──────────────────────────────────────────────────────────────
     if ram_gb < RAM_ESIK_GB:
-        uyarilar.append(f"[!] RAM Yukseltme Gerekli  : Mevcut {ram_gb} GB < Esik {RAM_ESIK_GB} GB")
-    if "YOK" in office_durum.upper():
-        uyarilar.append("[!] Eksik Yazilim          : Microsoft Office kurulu degil")
+        uyarilar.append(f"[!] RAM yetersiz: {ram_gb} GB < {RAM_ESIK_GB} GB esik")
     if disk_yuzde > DISK_ESIK_YUZDE:
-        uyarilar.append(f"[!] Disk Dikkat            : Doluluk {disk_yuzde}% > Esik {DISK_ESIK_YUZDE}%")
+        uyarilar.append(f"[!] Disk dolulugu kritik: %{disk_yuzde} > %{DISK_ESIK_YUZDE} esik")
 
-    # ── Yeni Yazilim Kurali: TeamViewer ──────────────────────────────────────
+    # ── Yazilim ──────────────────────────────────────────────────────────────
+    if "YOK" in office_durum.upper():
+        uyarilar.append("[!] Microsoft Office kurulu degil")
     if teamviewer_durum and "YOK" in teamviewer_durum.upper():
-        uyarilar.append("[-] TeamViewer yüklü değil!")
+        uyarilar.append("[-] TeamViewer kurulu degil")
+    if antivirus_durum and "YOK" in antivirus_durum.upper():
+        uyarilar.append("[-] Bitdefender Endpoint Security Tools kurulu degil!")
 
-    # ── Yeni Ag Kurallari ────────────────────────────────────────────────────
+    # ── Ag ───────────────────────────────────────────────────────────────────
     if ip and "Statik" in ip:
-        uyarilar.append("[-] Cihazda Statik IP yapılandırması mevcut!")
+        uyarilar.append("[-] Statik IP yapilandirmasi mevcut")
     if uyelik and ("Calisma Grubu" in uyelik or "Workgroup" in uyelik.lower()):
-        uyarilar.append("[-] Cihaz etki alanına (Domain) bağlı değil!")
+        uyarilar.append("[-] Cihaz Domain'e bagli degil")
 
     return uyarilar
 
@@ -415,11 +421,20 @@ def raporu_yazdir() -> None:
 
     print("\n[YUKLU PROGRAM KONTROLU]")
     print("-" * 40)
-    print("  (Kayıt defteri ve WMI taranıyor, lutfen bekleyin...)")
+    print("  (Kayit defteri ve WMI taranıyor, lutfen bekleyin...)")
     programlar = yuklu_program_kontrol()
-    for program, durum in programlar.items():
-        isaretci = "[+]" if "VAR" in durum else "[-]"
-        print(f"  {isaretci} {program:<20}: {durum}")
+    _program_etiket = {
+        "Google Chrome"    : "Google Chrome",
+        "Microsoft Office" : "Microsoft Office",
+        "TeamViewer"       : "TeamViewer",
+        "Antivirus"        : "Antivirus: Bitdefender Endpoint Security Tools",
+    }
+    for prog, durum in programlar.items():
+        etiket = _program_etiket.get(prog, prog)
+        if "VAR" in durum:
+            print(f"  [\u2713] {etiket}")
+        else:
+            print(f"  [X] {etiket} (Bulunamadi)")
 
     print("\n[AG / IP DURUMU]")
     print("-" * 40)

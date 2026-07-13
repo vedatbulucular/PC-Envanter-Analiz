@@ -99,6 +99,7 @@ def _analiz_yap() -> tuple:
         teamviewer_durum = programlar.get("TeamViewer", ""),
         ip               = ip,
         uyelik           = uyelik,
+        antivirus_durum  = programlar.get("Antivirus", ""),
     )
     return ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar
 
@@ -116,15 +117,23 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
     s.append(f"  Bilgisayar : {bilgisayar_adi()}")
     s.append(sep)
 
-    # ── YUKLU PROGRAM KONTROLU (en uste, vurgulu)
+    # ── YUKLU PROGRAM KONTROLU
     s.append("")
-    s.append(sep3)
-    s.append("  *** YUKLU PROGRAM KONTROLU ***")
-    s.append(sep3)
+    s.append("  [YUKLÜ PROGRAM KONTROLÜ]")
+    s.append(sep2)
+    _program_etiket = {
+        "Google Chrome"    : "Google Chrome",
+        "Microsoft Office" : "Microsoft Office",
+        "TeamViewer"       : "TeamViewer",
+        "Antivirus"        : "Antivirus: Bitdefender Endpoint Security Tools",
+    }
     for prog, durum in programlar.items():
-        isaretci = "[+] VAR " if "VAR" in durum else "[-] YOK "
-        s.append(f"  {isaretci}  {prog:<20}  {durum}")
-    s.append(sep3)
+        etiket = _program_etiket.get(prog, prog)
+        if "VAR" in durum:
+            s.append(f"  [\u2713] {etiket}")
+        else:
+            s.append(f"  [X] {etiket} (Bulunamadi)")
+    s.append("")
 
     # ── IP / AG DURUMU
     s.append("\n  [AG / IP DURUMU]")
