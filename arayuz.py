@@ -105,21 +105,13 @@ def _analiz_yap() -> tuple:
 
 
 def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar) -> str:
-    """Analiz sonuclarini formatlı metin olarak dondurur."""
-    zaman = datetime.datetime.now().strftime("%d.%m.%Y  %H:%M:%S")
+    """Analiz sonuclarini formatli metin olarak dondurur.
+    Sadece program kontrolu ve ag/IP durumu gosterilir."""
     s = []
-    sep  = "=" * 56
-    sep2 = "-" * 56
-
-
-    s.append(sep)
-    s.append(f"  PC ENVANTER RAPORU   |   {zaman}")
-    s.append(f"  Bilgisayar : {bilgisayar_adi()}")
-    s.append(sep)
+    sep2 = "-" * 48
 
     # ── YUKLU PROGRAM KONTROLU
-    s.append("")
-    s.append("  [YUKLÜ PROGRAM KONTROLÜ]")
+    s.append("[YUKLU PROGRAM KONTROLU]")
     s.append(sep2)
     _program_etiket = {
         "Google Chrome"    : "Google Chrome",
@@ -130,53 +122,17 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
     for prog, durum in programlar.items():
         etiket = _program_etiket.get(prog, prog)
         if "VAR" in durum:
-            s.append(f"  [\u2713] {etiket}")
+            s.append(f"[\u2713] {etiket}")
         else:
-            s.append(f"  [X] {etiket} (Bulunamadi)")
+            s.append(f"[X] {etiket} (Bulunamadi)")
+
+    # ── AG / IP DURUMU
     s.append("")
-
-    # ── IP / AG DURUMU
-    s.append("\n  [AG / IP DURUMU]")
+    s.append("[AG / IP DURUMU]")
     s.append(sep2)
-    s.append(f"  IP Yapilandirmasi   : {ip}")
-    s.append(f"  Ag Uyeligi          : {uyelik}")
+    s.append(f"IP Yapilandirmasi  : {ip}")
+    s.append(f"Ag Uyeligi         : {uyelik}")
 
-    # ── Isletim Sistemi
-    s.append("\n  [ISLETIM SISTEMI]")
-    s.append(sep2)
-    for k, v in isletim.items():
-        s.append(f"  {k:<24}: {v}")
-
-    # ── CPU
-    s.append("\n  [CPU]")
-    s.append(sep2)
-    for k, v in cpu.items():
-        s.append(f"  {k:<30}: {v}")
-
-    # ── RAM
-    s.append("\n  [RAM]")
-    s.append(sep2)
-    for k, v in ram.items():
-        s.append(f"  {k:<24}: {v}")
-
-    # ── Disk
-    s.append("\n  [DISK]")
-    s.append(sep2)
-    for i, d in enumerate(diskler, 1):
-        s.append(f"  [Disk {i}]")
-        for k, v in d.items():
-            s.append(f"    {k:<22}: {v}")
-
-    # ── Degerlendirme
-    s.append("\n  [DEGERLENDIRME / UYARILAR]")
-    s.append(sep2)
-    if uyarilar:
-        for u in uyarilar:
-            s.append(f"  {u}")
-    else:
-        s.append("  [OK] Tum kriterler karsilandi – uyari yok.")
-
-    s.append("\n" + sep)
     return "\n".join(s)
 
 

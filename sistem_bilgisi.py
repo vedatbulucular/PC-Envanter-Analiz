@@ -391,37 +391,10 @@ def excel_raporu_kaydet(
 
 
 def raporu_yazdir() -> None:
-    ayrac = "=" * 50
-    print(ayrac)
-    print("  SİSTEM BİLGİSİ RAPORU")
-    print(ayrac)
-    print(f"\n  Bilgisayar Adi : {bilgisayar_adi()}\n")
+    sep2 = "-" * 48
 
-    print("[ISLETIM SISTEMI]")
-    print("-" * 40)
-    for anahtar, deger in isletim_sistemi_bilgisi().items():
-        print(f"  {anahtar:<25}: {deger}")
-
-    print("\n[CPU]")
-    print("-" * 40)
-    for anahtar, deger in cpu_bilgisi().items():
-        print(f"  {anahtar:<30}: {deger}")
-
-    print("\n[RAM]")
-    print("-" * 40)
-    for anahtar, deger in ram_bilgisi().items():
-        print(f"  {anahtar:<25}: {deger}")
-
-    print("\n[DISK]")
-    print("-" * 40)
-    for i, disk in enumerate(disk_bilgisi(), start=1):
-        print(f"\n  [Disk {i}]")
-        for anahtar, deger in disk.items():
-            print(f"    {anahtar:<22}: {deger}")
-
-    print("\n[YUKLU PROGRAM KONTROLU]")
-    print("-" * 40)
-    print("  (Kayit defteri ve WMI taranıyor, lutfen bekleyin...)")
+    print("[YUKLU PROGRAM KONTROLU]")
+    print(sep2)
     programlar = yuklu_program_kontrol()
     _program_etiket = {
         "Google Chrome"    : "Google Chrome",
@@ -432,41 +405,32 @@ def raporu_yazdir() -> None:
     for prog, durum in programlar.items():
         etiket = _program_etiket.get(prog, prog)
         if "VAR" in durum:
-            print(f"  [\u2713] {etiket}")
+            print(f"[\u2713] {etiket}")
         else:
-            print(f"  [X] {etiket} (Bulunamadi)")
+            print(f"[X] {etiket} (Bulunamadi)")
 
-    print("\n[AG / IP DURUMU]")
-    print("-" * 40)
-    ip = ip_durumu()
+    print()
+    print("[AG / IP DURUMU]")
+    print(sep2)
+    ip     = ip_durumu()
     uyelik = ag_uyeligi()
-    print(f"  IP Yapılandırması : {ip}")
-    print(f"  Ag Uyeligi        : {uyelik}")
+    print(f"IP Yapilandirmasi  : {ip}")
+    print(f"Ag Uyeligi         : {uyelik}")
 
-    print("\n[DEGERLENDIRME / UYARILAR]")
-    print("-" * 40)
-    ram_veri    = ram_bilgisi()
-    disk_veri   = disk_bilgisi()
-    disk_yuzde  = next((d["Doluluk Oranı (%)"] for d in disk_veri if d["Bağlama Noktası"] == "C:\\"), 0.0)
-    
-    uyarilar = standart_kontrol(
+    # Excel raporu: arka planda hesaplanip kaydedilir
+    ram_veri   = ram_bilgisi()
+    disk_veri  = disk_bilgisi()
+    disk_yuzde = next((d["Doluluk Oranı (%)"] for d in disk_veri if d["Bağlama Noktası"] == "C:\\"), 0.0)
+    uyarilar   = standart_kontrol(
         ram_gb           = ram_veri["Toplam RAM (GB)"],
         office_durum     = programlar["Microsoft Office"],
         disk_yuzde       = disk_yuzde,
         teamviewer_durum = programlar.get("TeamViewer", ""),
         ip               = ip,
         uyelik           = uyelik,
+        antivirus_durum  = programlar.get("Antivirus", ""),
     )
-    if uyarilar:
-        for uyari in uyarilar:
-            print(f"  {uyari}")
-    else:
-        print("  [OK] Tum kriterler karsilandi – uyari yok.")
-
-    print("\n[EXCEL RAPORU]")
-    print("-" * 40)
-    print("  Rapor olusturuluyor...")
-    kaydedilen_yol = excel_raporu_kaydet(
+    yol = excel_raporu_kaydet(
         ram              = ram_veri,
         cpu              = cpu_bilgisi(),
         isletim_sistemi  = isletim_sistemi_bilgisi(),
@@ -476,8 +440,8 @@ def raporu_yazdir() -> None:
         ip               = ip,
         ag_uyeligi_bilgi = uyelik,
     )
-    print(f"  [OK] Rapor kaydedildi: {kaydedilen_yol}")
-    print(f"\n{ayrac}\n")
+    print(f"\n[Rapor kaydedildi] {yol}")
+
 
 
 if __name__ == "__main__":
