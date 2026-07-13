@@ -110,7 +110,7 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
     s = []
     sep  = "=" * 56
     sep2 = "-" * 56
-    sep3 = "*" * 56
+
 
     s.append(sep)
     s.append(f"  PC ENVANTER RAPORU   |   {zaman}")
