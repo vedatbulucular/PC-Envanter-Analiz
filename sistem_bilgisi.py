@@ -83,18 +83,63 @@ def disk_bilgisi() -> list[dict]:
 
 def ip_durumu() -> str:
     """
-    Aktif ag bagdastiricisinin DHCP durumunu WMI ile sorgular.
+    Donanımsal olarak var olan TÜM fiziksel ağ kartlarını tarar.
+    Herhangi bir fiziksel kartta DHCP kapalıysa (statik IP), kart
+    o an bağlı olmasa bile 'Statik IP (Manuel)' döner.
+
+    Filtreleme:
+      - Win32_NetworkAdapter(PhysicalAdapter=True) ile donanımsal kartlar alınır.
+      - Ek güvenlik için Description/Caption üzerinde sanal kelime filtresi uygulanır.
+      - DHCPEnabled=None (yapılandırma kaydı olmayan pasif kartlar) DHCP kabul edilir.
     """
+    SANAL_KELIMELER = [
+        "vmware", "virtualbox", "loopback", "bluetooth",
+        "vpn", "vethernet", "hyper-v", "virtual", "tunnel",
+        "teredo", "isatap", "6to4", "microsoft wi-fi direct",
+    ]
+
+    def _sanal_mi(metin: str) -> bool:
+        metin = metin.lower()
+        return any(k in metin for k in SANAL_KELIMELER)
+
     try:
         c = wmi.WMI()
-        for interface in c.Win32_NetworkAdapterConfiguration(IPEnabled=True):
-            if interface.DHCPEnabled:
-                return "Otomatik IP (DHCP)"
-            else:
-                return "Statik IP (Manuel)"
-        return "Bilinmiyor"
+
+        # PhysicalAdapter=True → donanımsal kartlar (sanal/tünel hariç)
+        fiziksel_nicler = c.Win32_NetworkAdapter(PhysicalAdapter=True)
+
+        statik_bulundu    = False
+        fiziksel_kart_var = False
+
+        for nic in fiziksel_nicler:
+            # İkinci güvenlik katmanı: açıklama/ad üzerinden sanal filtresi
+            desc    = str(getattr(nic, "Description",    "") or "")
+            caption = str(getattr(nic, "Caption",        "") or "")
+            if _sanal_mi(desc + " " + caption):
+                continue
+
+            # Bu karta ait WMI yapılandırma kaydını al
+            configs = c.Win32_NetworkAdapterConfiguration(Index=nic.Index)
+            for cfg in configs:
+                fiziksel_kart_var = True
+                dhcp = getattr(cfg, "DHCPEnabled", None)
+                # DHCPEnabled=False  → Statik (DHCP kapalı)
+                # DHCPEnabled=True   → Otomatik
+                # DHCPEnabled=None   → Kart pasif/bağlantısız, yapılandırma yok → DHCP say
+                if dhcp is False:
+                    statik_bulundu = True
+                    break
+
+            if statik_bulundu:
+                break   # Bir tane bile statik kart yeterlii
+
+        if not fiziksel_kart_var:
+            return "Bilinmiyor"
+
+        return "Statik IP (Manuel)" if statik_bulundu else "Otomatik IP (DHCP)"
+
     except Exception as e:
-        return f"Hata Olustu {str(e)}"
+        return f"Hata Olustu: {str(e)}"
 
 
 def ag_uyeligi() -> str:
