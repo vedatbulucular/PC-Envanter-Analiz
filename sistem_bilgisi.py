@@ -18,9 +18,20 @@ import socket
 import sys
 import io
 import psutil
-import pandas as pd
+import openpyxl
 import wmi
 import winreg
+import pythoncom
+
+def with_com(func):
+    """WMI fonksiyonlarini ayri bir is parcaciginda cagirirken COM nesnelerini guvenle baslatir."""
+    def wrapper(*args, **kwargs):
+        pythoncom.CoInitialize()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            pythoncom.CoUninitialize()
+    return wrapper
 
 # Not: stdout UTF-8 yonlendirmesi yalnizca dogrudan calistirildigi zaman
 # etkinlestirilir (asagida __main__ blogu icinde). Boylece arayuz.py
@@ -81,6 +92,7 @@ def disk_bilgisi() -> list[dict]:
             continue
     return disk_listesi
 
+@with_com
 def ip_durumu() -> str:
     """
     Donanımsal olarak var olan TÜM fiziksel ağ kartlarını tarar.
@@ -142,6 +154,7 @@ def ip_durumu() -> str:
         return f"Hata Olustu: {str(e)}"
 
 
+@with_com
 def ag_uyeligi() -> str:
     """
     WMI Win32_ComputerSystem ile bilgisayarin Domain veya Workgroup
@@ -222,6 +235,7 @@ def teamviewer_kurulu_mu() -> str:
             return "VAR"
     return "YOK"
 
+@with_com
 def bitdefender_kurulu_mu() -> str:
     """
     Kurumsal standart antivirüs olan 'Bitdefender Endpoint Security Tools'
@@ -260,12 +274,114 @@ def bitdefender_kurulu_mu() -> str:
     return "YOK"
 
 
+def acrobat_reader_kurulu_mu() -> str:
+    """
+    Adobe Acrobat Reader'in kurulu olup olmadigini kontrol eder.
+    Oncelik: Kayit defteri → bilinen kurulum yollari.
+    """
+    ARAMA_KELIMELERI = ["Adobe Acrobat", "Acrobat Reader"]
+    KURULUM_YOLLARI = [
+        r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
+        r"C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
+        r"C:\Program Files\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
+        r"C:\Program Files (x86)\Adobe\Reader 11.0\Reader\AcroRd32.exe",
+    ]
+    if _kayit_defterinde_ara(ARAMA_KELIMELERI):
+        return "VAR"
+    for yol in KURULUM_YOLLARI:
+        if os.path.exists(yol):
+            return "VAR"
+    return "YOK"
+
+
+def sikistirma_araci_kurulu_mu() -> str:
+    """
+    WinRAR, 7-Zip veya WinZip'ten herhangi birinin kurulu olup olmadigini kontrol eder.
+    Bulunan ilk aracin adini dondurur; hicbiri yoksa 'YOK' dondurur.
+    """
+    ARACLAR = [
+        ("WinRAR",  ["WinRAR"],  [
+            r"C:\Program Files\WinRAR\WinRAR.exe",
+            r"C:\Program Files (x86)\WinRAR\WinRAR.exe",
+        ]),
+        ("7-Zip",   ["7-Zip"],   [
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe",
+        ]),
+        ("WinZip",  ["WinZip"],  [
+            r"C:\Program Files\WinZip\WinZip64.exe",
+            r"C:\Program Files (x86)\WinZip\WinZip32.exe",
+        ]),
+    ]
+    for ad, kelimeler, yollar in ARACLAR:
+        if _kayit_defterinde_ara(kelimeler):
+            return f"VAR ({ad})"
+        for yol in yollar:
+            if os.path.exists(yol):
+                return f"VAR ({ad})"
+    return "YOK"
+
+
+@with_com
+def windows_lisans_durumu() -> str:
+    """
+    WMI SoftwareLicensingProduct uzerinden Windows aktivasyon durumunu sorgular.
+    LicenseStatus == 1 → Lisansli (Aktif).
+    """
+    WINDOWS_APP_ID = "55c92734-d682-4d71-983e-d6ec3f16059f"
+    try:
+        c = wmi.WMI()
+        urunler = c.SoftwareLicensingProduct(
+            ApplicationId=WINDOWS_APP_ID
+        )
+        for u in urunler:
+            durum = getattr(u, "LicenseStatus", None)
+            if durum == 1:
+                return "Lisansli (Aktif)"
+        return "Lisanssiz / Aktif Degil"
+    except Exception as e:
+        return f"Sorgulanamadi ({e})"
+
+
+@with_com
+def office_lisans_durumu() -> str:
+    """
+    WMI SoftwareLicensingProduct uzerinden Microsoft Office aktivasyon durumunu sorgular.
+    Birden fazla Office urunu varsa, aktif olan herhangi biri yeterlidir.
+    """
+    OFFICE_APP_IDS = [
+        "0ff1ce15-a989-479d-af46-f275c6370663",  # Office 2016/2019/365 ortak
+        "59a52881-a989-479d-af46-f275c6370663",  # Office 2013
+    ]
+    try:
+        c = wmi.WMI()
+        for app_id in OFFICE_APP_IDS:
+            try:
+                urunler = c.SoftwareLicensingProduct(ApplicationId=app_id)
+                for u in urunler:
+                    ad    = str(getattr(u, "Name",          "") or "")
+                    durum = getattr(u, "LicenseStatus", None)
+                    if durum == 1 and "office" in ad.lower():
+                        return "Lisansli"
+            except Exception:
+                continue
+        return "Lisanssiz / Aktif Degil"
+    except Exception as e:
+        return f"Sorgulanamadi ({e})"
+
+
 def yuklu_program_kontrol() -> dict:
+    # Office kurulum + lisans bilgisini tek geciste topla
+    office_kurulum = office_kurulu_mu()
+    office_lisans  = office_lisans_durumu() if "VAR" in office_kurulum else "Kurulu Degil"
     return {
         "Google Chrome"     : chrome_kurulu_mu(),
-        "Microsoft Office"  : office_kurulu_mu(),
+        "Microsoft Office"  : f"{office_kurulum}|{office_lisans}",
         "TeamViewer"        : teamviewer_kurulu_mu(),
         "Antivirus"         : bitdefender_kurulu_mu(),
+        "Acrobat Reader"    : acrobat_reader_kurulu_mu(),
+        "Sikistirma Araci"  : sikistirma_araci_kurulu_mu(),
+        "Windows Lisans"    : windows_lisans_durumu(),
     }
 
 
@@ -284,16 +400,22 @@ def standart_kontrol(
     ip: str = "",
     uyelik: str = "",
     antivirus_durum: str = "",
+    acrobat_durum: str = "",
+    sikistirma_durum: str = "",
+    windows_lisans: str = "",
 ) -> list[str]:
     """
     Donanim, yazilim ve ag kriterlerini degerlendirerek uyari listesi dondurur.
 
     Kurallar:
       - RAM < 8 GB
-      - Microsoft Office yok
+      - Microsoft Office kurulu degil veya lisanssiz
       - Disk dolulugu > %85
       - TeamViewer yok
       - Bitdefender Endpoint Security Tools yok
+      - Adobe Acrobat Reader yok
+      - Sikistirma araci yok
+      - Windows lisanssiz
       - Statik / Manuel IP konfigurasyonu
       - Cihaz etki alani (Domain) disinda (Workgroup)
     """
@@ -306,12 +428,21 @@ def standart_kontrol(
         uyarilar.append(f"[!] Disk dolulugu kritik: %{disk_yuzde} > %{DISK_ESIK_YUZDE} esik")
 
     # ── Yazilim ──────────────────────────────────────────────────────────────
+    # Office: 'VAR|Lisanssiz' veya 'YOK|...' her ikisi de uyari olusturur
     if "YOK" in office_durum.upper():
         uyarilar.append("[!] Microsoft Office kurulu degil")
+    elif "Lisanssiz" in office_durum or "Aktif Degil" in office_durum:
+        uyarilar.append("[!] Microsoft Office lisanssiz / aktif degil")
     if teamviewer_durum and "YOK" in teamviewer_durum.upper():
         uyarilar.append("[-] TeamViewer kurulu degil")
     if antivirus_durum and "YOK" in antivirus_durum.upper():
-        uyarilar.append("[-] Bitdefender Endpoint Security Tools kurulu degil!")
+        uyarilar.append("[-] Bitdefender Endpoint Security Tools kurulu degil")
+    if acrobat_durum and "YOK" in acrobat_durum.upper():
+        uyarilar.append("[-] Adobe Acrobat Reader kurulu degil")
+    if sikistirma_durum and "YOK" in sikistirma_durum.upper():
+        uyarilar.append("[-] Sikistirma araci (WinRAR/7-Zip/WinZip) kurulu degil")
+    if windows_lisans and ("Lisanssiz" in windows_lisans or "Aktif Degil" in windows_lisans):
+        uyarilar.append("[!] Windows lisanssiz / aktif degil")
 
     # ── Ag ───────────────────────────────────────────────────────────────────
     if ip and "Statik" in ip:
@@ -356,37 +487,49 @@ def excel_raporu_kaydet(
         {"Kategori": "Bos RAM (GB)",       "Bilgi": ram.get("Boş (GB)", "")},
         {"Kategori": "RAM Kullanim (%)",   "Bilgi": ram.get("Kullanım Oranı (%)", "")},
     ]
-    df_ozet = pd.DataFrame(ozet_satirlar)
 
-    df_disk = pd.DataFrame(diskler) if diskler else pd.DataFrame(
-        columns=["Baglama Noktasi", "Dosya Sistemi", "Toplam (GB)",
-                 "Kullanilan (GB)", "Bos (GB)", "Doluluk Orani (%)"]
-    )
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
 
-    program_satirlar = [{"Program": prog, "Durum": durum} for prog, durum in programlar.items()]
-    df_program = pd.DataFrame(program_satirlar)
+    ws_ozet = wb.create_sheet("Sistem Ozeti")
+    ws_ozet.append(["Kategori", "Bilgi"])
+    for row in ozet_satirlar:
+        ws_ozet.append([row["Kategori"], row["Bilgi"]])
 
+    ws_disk = wb.create_sheet("Disk Bilgileri")
+    ws_disk.append(["Baglama Noktasi", "Dosya Sistemi", "Toplam (GB)", "Kullanilan (GB)", "Bos (GB)", "Doluluk Orani (%)"])
+    if diskler:
+        for d in diskler:
+            ws_disk.append([
+                d.get("Baglama Noktasi", ""), d.get("Dosya Sistemi", ""), 
+                d.get("Toplam (GB)", ""), d.get("Kullanilan (GB)", ""), 
+                d.get("Bos (GB)", ""), d.get("Doluluk Orani (%)", "")
+            ])
+
+    ws_program = wb.create_sheet("Program Durumu")
+    ws_program.append(["Program", "Durum"])
+    for prog, durum in programlar.items():
+        ws_program.append([prog, durum])
+
+    ws_uyari = wb.create_sheet("Degerlendirme")
+    ws_uyari.append(["Uyari"])
     if uyarilar:
-        uyari_satirlar = [{"Uyari": u.lstrip("[!] ").strip()} for u in uyarilar]
+        for u in uyarilar:
+            ws_uyari.append([u.lstrip("[!] ").strip()])
     else:
-        uyari_satirlar = [{"Uyari": "Tum kriterler karsilandi – uyari yok."}]
-    df_uyari = pd.DataFrame(uyari_satirlar)
+        ws_uyari.append(["Tum kriterler karsilandi – uyari yok."])
 
     dosya_yolu = os.path.join(cikti_dizini, dosya_adi)
-    with pd.ExcelWriter(dosya_yolu, engine="openpyxl") as writer:
-        df_ozet.to_excel(writer,    sheet_name="Sistem Ozeti",      index=False)
-        df_disk.to_excel(writer,    sheet_name="Disk Bilgileri",     index=False)
-        df_program.to_excel(writer, sheet_name="Program Durumu",     index=False)
-        df_uyari.to_excel(writer,   sheet_name="Degerlendirme",      index=False)
+    
+    for sayfa in wb.worksheets:
+        for sutun_hucreleri in sayfa.columns:
+            max_uzunluk = max(
+                len(str(hucre.value)) if hucre.value is not None else 0
+                for hucre in sutun_hucreleri
+            )
+            sayfa.column_dimensions[sutun_hucreleri[0].column_letter].width = min(max_uzunluk + 4, 60)
 
-        for sayfa in writer.sheets.values():
-            for sutun_hucreleri in sayfa.columns:
-                max_uzunluk = max(
-                    len(str(hucre.value)) if hucre.value is not None else 0
-                    for hucre in sutun_hucreleri
-                )
-                sayfa.column_dimensions[sutun_hucreleri[0].column_letter].width = min(max_uzunluk + 4, 60)
-
+    wb.save(dosya_yolu)
     return os.path.abspath(dosya_yolu)
 
 

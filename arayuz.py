@@ -11,6 +11,7 @@ import datetime
 import os
 import sys
 import io
+import concurrent.futures
 try:
     import pythoncom
     _PYTHONCOM = True
@@ -38,7 +39,14 @@ from sistem_bilgisi import (
     disk_bilgisi,
     ip_durumu,
     ag_uyeligi,
-    yuklu_program_kontrol,
+    chrome_kurulu_mu,
+    office_kurulu_mu,
+    office_lisans_durumu,
+    teamviewer_kurulu_mu,
+    bitdefender_kurulu_mu,
+    acrobat_reader_kurulu_mu,
+    sikistirma_araci_kurulu_mu,
+    windows_lisans_durumu,
     standart_kontrol,
     excel_raporu_kaydet,
 )
@@ -79,52 +87,72 @@ FONT = {
 # Yardimci – analiz sonucu metin formatla
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _analiz_yap() -> tuple:
-    """Tum kontrolleri calistirir; ham veri demetini dondurur."""
-    ram        = ram_bilgisi()
-    cpu        = cpu_bilgisi()
-    isletim    = isletim_sistemi_bilgisi()
-    diskler    = disk_bilgisi()
-    programlar = yuklu_program_kontrol()
-    ip         = ip_durumu()
-    uyelik     = ag_uyeligi()
-    disk_yuzde = next(
-        (d["Doluluk Oranı (%)"] for d in diskler if d["Bağlama Noktası"] == "C:\\"),
-        0.0,
-    )
-    uyarilar = standart_kontrol(
-        ram_gb           = ram["Toplam RAM (GB)"],
-        office_durum     = programlar["Microsoft Office"],
-        disk_yuzde       = disk_yuzde,
-        teamviewer_durum = programlar.get("TeamViewer", ""),
-        ip               = ip,
-        uyelik           = uyelik,
-        antivirus_durum  = programlar.get("Antivirus", ""),
-    )
-    return ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar
-
 
 def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar) -> str:
     """Analiz sonuclarini formatli metin olarak dondurur.
-    Sadece program kontrolu ve ag/IP durumu gosterilir."""
+    Sadece program kontrolu, lisans ve ag/IP durumu gosterilir."""
     s = []
     sep2 = "-" * 48
 
     # ── YUKLU PROGRAM KONTROLU
     s.append("[YUKLU PROGRAM KONTROLU]")
     s.append(sep2)
-    _program_etiket = {
-        "Google Chrome"    : "Google Chrome",
-        "Microsoft Office" : "Microsoft Office",
-        "TeamViewer"       : "TeamViewer",
-        "Antivirus"        : "Antivirus: Bitdefender Endpoint Security Tools",
-    }
+
+    # Her program icin ozel etiket ve durum gosterimi
     for prog, durum in programlar.items():
-        etiket = _program_etiket.get(prog, prog)
-        if "VAR" in durum:
-            s.append(f"[\u2713] {etiket}")
+        if prog == "Microsoft Office":
+            # Durum formati: 'VAR|Lisansli' veya 'YOK|Kurulu Degil'
+            parcalar = durum.split("|", 1)
+            kurulum  = parcalar[0].strip()  # VAR / YOK
+            lisans   = parcalar[1].strip() if len(parcalar) > 1 else ""
+            if "VAR" in kurulum:
+                s.append(f"[\u2713] Microsoft Office (Lisans Durumu: {lisans})")
+            else:
+                s.append("[X] Microsoft Office (Bulunamadi)")
+        elif prog == "Antivirus":
+            if "VAR" in durum:
+                s.append(f"[\u2713] Antivirus: Bitdefender Endpoint Security Tools")
+            else:
+                s.append("[X] Antivirus: Bitdefender Endpoint Security Tools (Bulunamadi)")
+        elif prog == "Acrobat Reader":
+            if "VAR" in durum:
+                s.append(f"[\u2713] Adobe Acrobat Reader")
+            else:
+                s.append("[X] Adobe Acrobat Reader (Bulunamadi)")
+        elif prog == "Sikistirma Araci":
+            if "VAR" in durum:
+                # durum = 'VAR (WinRAR)' gibi; arac adini goster
+                arac = durum.replace("VAR", "").strip().strip("()").strip()
+                etiket = f"Sikistirma Araci ({arac})" if arac else "Sikistirma Araci"
+                s.append(f"[\u2713] {etiket}")
+            else:
+                s.append("[X] Sikistirma Araci (WinRAR / 7-Zip) (Bulunamadi)")
+        elif prog == "Windows Lisans":
+            # Bu satiri atliyoruz — asagida ayri bolumde gosterilecek
+            continue
+        elif prog == "Google Chrome":
+            if "VAR" in durum:
+                s.append(f"[\u2713] Google Chrome")
+            else:
+                s.append("[X] Google Chrome (Bulunamadi)")
+        elif prog == "TeamViewer":
+            if "VAR" in durum:
+                s.append(f"[\u2713] TeamViewer")
+            else:
+                s.append("[X] TeamViewer (Bulunamadi)")
         else:
-            s.append(f"[X] {etiket} (Bulunamadi)")
+            # Bilinmeyen programlar icin genel gosterim
+            if "VAR" in durum:
+                s.append(f"[\u2713] {prog}")
+            else:
+                s.append(f"[X] {prog} (Bulunamadi)")
+
+    # ── SISTEM VE LISANS DURUMU
+    s.append("")
+    s.append("[SISTEM VE LISANS DURUMU]")
+    s.append(sep2)
+    win_lisans = programlar.get("Windows Lisans", "Bilinmiyor")
+    s.append(f"Windows Isletim Sistemi : {win_lisans}")
 
     # ── AG / IP DURUMU
     s.append("")
@@ -213,7 +241,6 @@ class PCAnalizApp(ctk.CTk):
         self._son_uyelik: str      = ""
         self._son_uyarilar: list   = []
         self._analiz_yapildi       = False
-        self._ip_blink_aktif       = False   # Statik IP yanip sonme durumu
 
         self._arayuz_olustur()
 
@@ -271,7 +298,7 @@ class PCAnalizApp(ctk.CTk):
         ana.grid_columnconfigure(0, weight=1)
         ana.grid_rowconfigure(1, weight=1)
 
-        # ── Ozet kart satiri ────────────────────────────────────────────────
+        # ── Ozet kart satiri ─────────────────────────────────────────────────────────
         kart_satiri = ctk.CTkFrame(ana, fg_color="transparent")
         kart_satiri.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         for i in range(5):
@@ -407,7 +434,7 @@ class PCAnalizApp(ctk.CTk):
         self._durum_lbl.grid(row=0, column=0, sticky="w", padx=16)
 
         ctk.CTkLabel(
-            bar, text="customtkinter  |  psutil  |  pandas  |  openpyxl",
+            bar, text="customtkinter  |  psutil  |  openpyxl",
             font=FONT["status"],
             text_color=RENK["border"],
         ).grid(row=0, column=1, sticky="e", padx=16)
@@ -434,9 +461,7 @@ class PCAnalizApp(ctk.CTk):
 
     def _sistemi_sifirla(self):
         """Arayuzu varsayilan haline dondurur."""
-        # Yanip sonme varsa durdur
         self._ip_blink_aktif = False
-
         self._analiz_yapildi = False
         self._son_ram.clear()
         self._son_cpu.clear()
@@ -447,45 +472,44 @@ class PCAnalizApp(ctk.CTk):
         self._son_uyelik = ""
         self._son_uyarilar.clear()
 
-        # Metin kutusu sifirlama
         self._metin_yaz(
             "  Analiz başlatmak için  'Sistemi Analiz Et'  butonuna tıklayın.\n\n"
             "  Tüm donanım, yazılım ve güvenlik kontrolleri arka planda\n"
             "  çalıştırılacak ve sonuçlar burada görüntülenecektir.\n"
         )
-        
-        # Kartlari sifirlama
+
         self._kart_bilgisayar.guncelle("—")
-        self._kart_bilgisayar._alt_lbl.configure(text="")
+        if hasattr(self._kart_bilgisayar, "_alt_lbl"):
+            self._kart_bilgisayar._alt_lbl.configure(text="")
         
         self._kart_ram.guncelle("—")
-        self._kart_ram._alt_lbl.configure(text="")
+        if hasattr(self._kart_ram, "_alt_lbl"):
+            self._kart_ram._alt_lbl.configure(text="")
         
         self._kart_disk.guncelle("—")
         self._kart_disk._deger_lbl.configure(text_color=RENK["warning"])
-        self._kart_disk._alt_lbl.configure(text="")
+        if hasattr(self._kart_disk, "_alt_lbl"):
+            self._kart_disk._alt_lbl.configure(text="")
         
-        # IP kartini sifirla ve cerceve rengini orijinaline dondur
         self._kart_ip.guncelle("—")
         self._kart_ip._deger_lbl.configure(text_color=RENK["purple"])
         self._kart_ip._serit.configure(bg=RENK["purple"])
         self._kart_ip.configure(border_color=RENK["border"])
-        self._kart_ip._alt_lbl.configure(text="")
-        
+        if hasattr(self._kart_ip, "_alt_lbl"):
+            self._kart_ip._alt_lbl.configure(text="")
+
         self._kart_uyari.guncelle("—")
         self._kart_uyari._deger_lbl.configure(text_color=RENK["danger"])
         self._kart_uyari._alt_lbl.configure(text="")
 
-        # Butonlar ve Durum
         self._btn_analiz.configure(state="normal", text="  ▶   Sistemi Analiz Et")
         self._btn_excel.configure(state="disabled", text="  ⬇   Excel'e Aktar")
         self._rozet_guncelle("Hazır", RENK["border"])
         self._durum_guncelle("Hazır.", RENK["text_dim"])
 
     def _ip_kart_yanip_sonsun(self, acik: bool = True):
-        """Statik IP algilandiğında IP kartinin cercevesini 500ms'de bir kirmiziyla yanip sondurur."""
+        """Statik IP algilandiginda IP kartinin cercevesini 500ms'de bir kirmiziyla yanip sondurur."""
         if not self._ip_blink_aktif:
-            # Yanip sonme durduruldu, kartı normal renge geri al
             self._kart_ip.configure(border_color=RENK["border"])
             return
         if acik:
@@ -514,79 +538,117 @@ class PCAnalizApp(ctk.CTk):
         t.start()
 
     def _analiz_thread(self):
-        """Arka plan is parcacigi – UI'yi dogrudan guncellememeli."""
+        """Arka plan is parcacigi – concurrent.futures ile paralel calisir."""
         if _PYTHONCOM:
             pythoncom.CoInitialize()
         try:
-            ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar = _analiz_yap()
-            self._son_ram        = ram
-            self._son_cpu        = cpu
-            self._son_isletim    = isletim
-            self._son_diskler    = diskler
+            with concurrent.futures.ThreadPoolExecutor(max_workers=14) as executor:
+                futures = {
+                    executor.submit(ram_bilgisi): "ram",
+                    executor.submit(cpu_bilgisi): "cpu",
+                    executor.submit(isletim_sistemi_bilgisi): "os",
+                    executor.submit(disk_bilgisi): "disk",
+                    executor.submit(ip_durumu): "ip",
+                    executor.submit(ag_uyeligi): "uyelik",
+                    executor.submit(chrome_kurulu_mu): "chrome",
+                    executor.submit(office_kurulu_mu): "office_k",
+                    executor.submit(office_lisans_durumu): "office_l",
+                    executor.submit(teamviewer_kurulu_mu): "teamviewer",
+                    executor.submit(bitdefender_kurulu_mu): "antivirus",
+                    executor.submit(acrobat_reader_kurulu_mu): "acrobat",
+                    executor.submit(sikistirma_araci_kurulu_mu): "zip",
+                    executor.submit(windows_lisans_durumu): "win_lisans",
+                }
+                
+                results = {}
+                for f in concurrent.futures.as_completed(futures):
+                    name = futures[f]
+                    try:
+                        res = f.result()
+                        results[name] = res
+                        
+                        if name == "ram":
+                            self.after(0, lambda r=res: self._kart_ram.guncelle(f"{r.get('Toplam RAM (GB)', '?')} GB"))
+                        elif name == "disk":
+                            dy = next((d["Doluluk Oranı (%)"] for d in res if d["Bağlama Noktası"] == "C:\\"), 0.0)
+                            dr = RENK["danger"] if dy > 85 else RENK["warning"] if dy > 70 else RENK["green"]
+                            def up_disk(y=dy, c=dr):
+                                self._kart_disk.guncelle(f"%{y}")
+                                self._kart_disk._deger_lbl.configure(text_color=c)
+                            self.after(0, up_disk)
+                        elif name == "ip":
+                            def up_ip(ir=res):
+                                cr = RENK["orange"] if "Statik" in ir else RENK["purple"] if "DHCP" in ir else RENK["text_dim"]
+                                kisa = "Statik IP" if "Statik" in ir else "Otomatik (DHCP)" if "DHCP" in ir else "Bilinmiyor"
+                                self._kart_ip.guncelle(kisa)
+                                self._kart_ip._deger_lbl.configure(text_color=cr)
+                                self._kart_ip._serit.configure(bg=cr)
+                                if "Statik" in ir:
+                                    self._ip_blink_aktif = True
+                                    self._ip_kart_yanip_sonsun(acik=True)
+                            self.after(0, up_ip)
+                        elif name == "uyelik":
+                            def up_uy(ur=res):
+                                uk = ur.split(":", 1)[-1].strip() if ":" in ur else ur
+                                pc = bilgisayar_adi()
+                                self._kart_bilgisayar.guncelle(pc)
+                                if hasattr(self._kart_bilgisayar, "_alt_lbl"):
+                                    self._kart_bilgisayar._alt_lbl.configure(text=uk)
+                            self.after(0, up_uy)
+                    except Exception as e:
+                        print(f"Hata ({name}): {e}")
+
+            programlar = {
+                "Google Chrome": results.get("chrome", "YOK"),
+                "Microsoft Office": f"{results.get('office_k', 'YOK')}|{results.get('office_l', 'Kurulu Degil') if 'VAR' in results.get('office_k', '') else 'Kurulu Degil'}",
+                "TeamViewer": results.get("teamviewer", "YOK"),
+                "Antivirus": results.get("antivirus", "YOK"),
+                "Acrobat Reader": results.get("acrobat", "YOK"),
+                "Sikistirma Araci": results.get("zip", "YOK"),
+                "Windows Lisans": results.get("win_lisans", "Sorgulanamadi")
+            }
+            
+            disk_yuzde = next((d["Doluluk Oranı (%)"] for d in results.get("disk", []) if d["Bağlama Noktası"] == "C:\\"), 0.0)
+            uyarilar = standart_kontrol(
+                ram_gb           = results.get("ram", {}).get("Toplam RAM (GB)", 0),
+                office_durum     = programlar["Microsoft Office"],
+                disk_yuzde       = disk_yuzde,
+                teamviewer_durum = programlar["TeamViewer"],
+                ip               = results.get("ip", ""),
+                uyelik           = results.get("uyelik", ""),
+                antivirus_durum  = programlar["Antivirus"],
+                acrobat_durum    = programlar["Acrobat Reader"],
+                sikistirma_durum = programlar["Sikistirma Araci"],
+                windows_lisans   = programlar["Windows Lisans"],
+            )
+
+            self._son_ram        = results.get("ram", {})
+            self._son_cpu        = results.get("cpu", {})
+            self._son_isletim    = results.get("os", {})
+            self._son_diskler    = results.get("disk", [])
             self._son_programlar = programlar
-            self._son_ip         = ip
-            self._son_uyelik     = uyelik
+            self._son_ip         = results.get("ip", "")
+            self._son_uyelik     = results.get("uyelik", "")
             self._son_uyarilar   = uyarilar
             self._analiz_yapildi = True
-            metin = _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
-            self.after(0, self._analiz_bitti, metin, ram, diskler, ip, uyelik, uyarilar)
+
+            metin = _metni_olustur(self._son_ram, self._son_cpu, self._son_isletim, self._son_diskler, programlar, self._son_ip, self._son_uyelik, uyarilar)
+            self.after(0, self._analiz_bitti_guncelle, metin, uyarilar)
+            
         except Exception as hata:
             self.after(0, self._analiz_hata, str(hata))
         finally:
             if _PYTHONCOM:
                 pythoncom.CoUninitialize()
 
-    def _analiz_bitti(self, metin: str, ram: dict,
-                      diskler: list, ip: str, uyelik: str, uyarilar: list):
-        """Ana thread'de UI'yi gunceller."""
+    def _analiz_bitti_guncelle(self, metin: str, uyarilar: list):
+        """Tum gorevler bitince Log (Textbox) ve Uyari panelini gunceller."""
         self._metin_yaz(metin)
-
-        # Ozet kartlari guncelle
-        # Bilgisayar kartı: ad + ag uyeligi alt bilgisi
-        pc_adi = bilgisayar_adi()
-        # Uyeligin kisa halini al (ilk kelime yeterli degil; tum degeri goster)
-        uyelik_kisa = uyelik.split(":", 1)[-1].strip() if ":" in uyelik else uyelik
-        self._kart_bilgisayar.guncelle(pc_adi)
-        # Alt etiket guncelle (varsa)
-        if hasattr(self._kart_bilgisayar, "_alt_lbl"):
-            self._kart_bilgisayar._alt_lbl.configure(text=uyelik_kisa)
-        self._kart_ram.guncelle(f"{ram.get('Toplam RAM (GB)', '?')} GB")
-
-        disk_yuzde = next(
-            (d["Doluluk Oranı (%)"] for d in diskler
-             if d["Bağlama Noktası"] == "C:\\"), 0.0)
-        disk_renk = RENK["danger"] if disk_yuzde > 85 else \
-                    RENK["warning"] if disk_yuzde > 70 else RENK["green"]
-        self._kart_disk.guncelle(f"%{disk_yuzde}")
-        self._kart_disk._deger_lbl.configure(text_color=disk_renk)
-
-        # IP kartı – Statik ise turuncu + yanip sonme, DHCP ise mor
-        if "Statik" in ip:
-            ip_renk = RENK["orange"]
-            ip_kisa = "Statik IP"
-        elif "DHCP" in ip:
-            ip_renk = RENK["purple"]
-            ip_kisa = "Otomatik (DHCP)"
-        else:
-            ip_renk = RENK["text_dim"]
-            ip_kisa = "Bilinmiyor"
-        self._kart_ip.guncelle(ip_kisa)
-        self._kart_ip._deger_lbl.configure(text_color=ip_renk)
-        self._kart_ip._serit.configure(bg=ip_renk)
-
-        # Statik IP ise yanip sonmeyi baslat
-        if "Statik" in ip:
-            self._ip_blink_aktif = True
-            self._ip_kart_yanip_sonsun(acik=True)
-        else:
-            self._ip_blink_aktif = False
-            self._kart_ip.configure(border_color=RENK["border"])
 
         uyari_renk = RENK["danger"] if uyarilar else RENK["green"]
         self._kart_uyari.guncelle(str(len(uyarilar)))
         self._kart_uyari._deger_lbl.configure(text_color=uyari_renk)
-        
-        # Uyari karti: tum uyarilari kisalt ve listele (sinir yok)
+
         if uyarilar:
             def kisa_uyari(u: str) -> str:
                 u = u.replace("[-]", "").replace("[!]", "").strip()
@@ -603,7 +665,6 @@ class PCAnalizApp(ctk.CTk):
                 text="Sorun Yok", text_color=RENK["green"],
                 font=("Segoe UI", 9),
             )
-
 
         # Buton ve rozet
         self._btn_analiz.configure(state="normal",
