@@ -171,6 +171,26 @@ def ag_uyeligi() -> str:
     except Exception as e:
         return f"Hata Olustu: {str(e)}"
 
+@with_com
+def eksik_surucu_kontrol() -> list[dict]:
+    """
+    Win32_PnPEntity uzerinden ConfigManagerErrorCode != 0 olan
+    sürücüsü yüklenmemiş donanımları tespit eder.
+    """
+    eksik_aygitlar = []
+    try:
+        c = wmi.WMI()
+        for aygit in c.Win32_PnPEntity():
+            if aygit.ConfigManagerErrorCode is not None and aygit.ConfigManagerErrorCode != 0:
+                eksik_aygitlar.append({
+                    "Ad": getattr(aygit, "Name", "Bilinmeyen Aygıt"),
+                    "Donanım Kimliği": getattr(aygit, "PNPDeviceID", "Bilinmiyor"),
+                    "Hata Kodu": aygit.ConfigManagerErrorCode
+                })
+    except Exception as e:
+        eksik_aygitlar.append({"Ad": "Sorgu Hatasi", "Donanım Kimliği": str(e), "Hata Kodu": -1})
+    return eksik_aygitlar
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # AŞAMA 2 – YÜKLÜ PROGRAM KONTROLÜ (WinReg & WMI)
@@ -403,6 +423,7 @@ def standart_kontrol(
     acrobat_durum: str = "",
     sikistirma_durum: str = "",
     windows_lisans: str = "",
+    eksik_suruculer: list = None,
 ) -> list[str]:
     """
     Donanim, yazilim ve ag kriterlerini degerlendirerek uyari listesi dondurur.
@@ -450,6 +471,10 @@ def standart_kontrol(
     if uyelik and ("Calisma Grubu" in uyelik or "Workgroup" in uyelik.lower()):
         uyarilar.append("[-] Cihaz Domain'e bagli degil")
 
+    # ── Donanim Suruculeri ───────────────────────────────────────────────────
+    if eksik_suruculer:
+        uyarilar.append("[!] Eksik sürücüler tespit edildi")
+
     return uyarilar
 
 
@@ -460,7 +485,7 @@ def standart_kontrol(
 def excel_raporu_kaydet(
     ram: dict, cpu: dict, isletim_sistemi: dict, diskler: list[dict],
     programlar: dict, uyarilar: list[str], ip: str = "",
-    ag_uyeligi_bilgi: str = "",
+    ag_uyeligi_bilgi: str = "", eksik_suruculer: list = None,
     cikti_dizini: str = ".", dosya_adi: str = ""
 ) -> str:
     zaman_damgasi = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -511,6 +536,14 @@ def excel_raporu_kaydet(
     for prog, durum in programlar.items():
         ws_program.append([prog, durum])
 
+    ws_surucu = wb.create_sheet("Eksik Suruculer")
+    ws_surucu.append(["Aygit Adi", "Donanim Kimligi", "Hata Kodu"])
+    if eksik_suruculer:
+        for s in eksik_suruculer:
+            ws_surucu.append([s.get("Ad", ""), s.get("Donanım Kimliği", ""), s.get("Hata Kodu", "")])
+    else:
+        ws_surucu.append(["Tüm sürücüler yüklü ve sorunsuz çalışıyor.", "", ""])
+
     ws_uyari = wb.create_sheet("Degerlendirme")
     ws_uyari.append(["Uyari"])
     if uyarilar:
@@ -560,6 +593,8 @@ def raporu_yazdir() -> None:
     print(f"IP Yapilandirmasi  : {ip}")
     print(f"Ag Uyeligi         : {uyelik}")
 
+    eksik_surucu = eksik_surucu_kontrol()
+
     # Excel raporu: arka planda hesaplanip kaydedilir
     ram_veri   = ram_bilgisi()
     disk_veri  = disk_bilgisi()
@@ -572,6 +607,7 @@ def raporu_yazdir() -> None:
         ip               = ip,
         uyelik           = uyelik,
         antivirus_durum  = programlar.get("Antivirus", ""),
+        eksik_suruculer  = eksik_surucu,
     )
     yol = excel_raporu_kaydet(
         ram              = ram_veri,
@@ -582,6 +618,7 @@ def raporu_yazdir() -> None:
         uyarilar         = uyarilar,
         ip               = ip,
         ag_uyeligi_bilgi = uyelik,
+        eksik_suruculer  = eksik_surucu,
     )
     print(f"\n[Rapor kaydedildi] {yol}")
 

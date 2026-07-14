@@ -47,6 +47,7 @@ from sistem_bilgisi import (
     acrobat_reader_kurulu_mu,
     sikistirma_araci_kurulu_mu,
     windows_lisans_durumu,
+    eksik_surucu_kontrol,
     standart_kontrol,
     excel_raporu_kaydet,
 )
@@ -88,7 +89,7 @@ FONT = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar) -> str:
+def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar, eksik_suruculer=None) -> str:
     """Analiz sonuclarini formatli metin olarak dondurur.
     Sadece program kontrolu, lisans ve ag/IP durumu gosterilir."""
     s = []
@@ -160,6 +161,17 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar)
     s.append(sep2)
     s.append(f"IP Yapilandirmasi  : {ip}")
     s.append(f"Ag Uyeligi         : {uyelik}")
+
+    # ── DONANIM SURUCU KONTROLU
+    s.append("")
+    s.append("[DONANIM SÜRÜCÜ KONTROLÜ]")
+    s.append(sep2)
+    if eksik_suruculer:
+        for aygit in eksik_suruculer:
+            s.append(f"[!] Eksik Sürücü: {aygit.get('Ad', 'Bilinmeyen')}")
+            s.append(f"    Hardware ID: {aygit.get('Donanım Kimliği', 'Bilinmiyor')}")
+    else:
+        s.append("Tüm sürücüler yüklü ve sorunsuz çalışıyor.")
 
     return "\n".join(s)
 
@@ -550,7 +562,7 @@ class PCAnalizApp(ctk.CTk):
         if _PYTHONCOM:
             pythoncom.CoInitialize()
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=14) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                 futures = {
                     executor.submit(ram_bilgisi): "ram",
                     executor.submit(cpu_bilgisi): "cpu",
@@ -566,6 +578,7 @@ class PCAnalizApp(ctk.CTk):
                     executor.submit(acrobat_reader_kurulu_mu): "acrobat",
                     executor.submit(sikistirma_araci_kurulu_mu): "zip",
                     executor.submit(windows_lisans_durumu): "win_lisans",
+                    executor.submit(eksik_surucu_kontrol): "suruculer",
                 }
                 
                 results = {}
@@ -630,6 +643,7 @@ class PCAnalizApp(ctk.CTk):
                 acrobat_durum    = programlar["Acrobat Reader"],
                 sikistirma_durum = programlar["Sikistirma Araci"],
                 windows_lisans   = programlar["Windows Lisans"],
+                eksik_suruculer  = results.get("suruculer", []),
             )
 
             self._son_ram        = results.get("ram", {})
@@ -642,7 +656,7 @@ class PCAnalizApp(ctk.CTk):
             self._son_uyarilar   = uyarilar
             self._analiz_yapildi = True
 
-            metin = _metni_olustur(self._son_ram, self._son_cpu, self._son_isletim, self._son_diskler, programlar, self._son_ip, self._son_uyelik, uyarilar)
+            metin = _metni_olustur(self._son_ram, self._son_cpu, self._son_isletim, self._son_diskler, programlar, self._son_ip, self._son_uyelik, uyarilar, results.get("suruculer", []))
             self.after(0, self._analiz_bitti_guncelle, metin, uyarilar)
             
         except Exception as hata:
