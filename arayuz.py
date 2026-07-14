@@ -461,7 +461,7 @@ class PCAnalizApp(ctk.CTk):
 
     def _sistemi_sifirla(self):
         """Arayuzu varsayilan haline dondurur."""
-        self._ip_blink_aktif = False
+        self._ip_yanip_sonme_iptal()
         self._analiz_yapildi = False
         self._son_ram.clear()
         self._son_cpu.clear()
@@ -507,6 +507,13 @@ class PCAnalizApp(ctk.CTk):
         self._rozet_guncelle("Hazır", RENK["border"])
         self._durum_guncelle("Hazır.", RENK["text_dim"])
 
+    def _ip_yanip_sonme_iptal(self):
+        self._ip_blink_aktif = False
+        if hasattr(self, "_ip_blink_id") and self._ip_blink_id:
+            self.after_cancel(self._ip_blink_id)
+            self._ip_blink_id = None
+        self._kart_ip.configure(border_color=RENK["border"])
+
     def _ip_kart_yanip_sonsun(self, acik: bool = True):
         """Statik IP algilandiginda IP kartinin cercevesini 500ms'de bir kirmiziyla yanip sondurur."""
         if not self._ip_blink_aktif:
@@ -516,12 +523,13 @@ class PCAnalizApp(ctk.CTk):
             self._kart_ip.configure(border_color=RENK["danger"])
         else:
             self._kart_ip.configure(border_color=RENK["border"])
-        self.after(500, self._ip_kart_yanip_sonsun, not acik)
+        self._ip_blink_id = self.after(500, self._ip_kart_yanip_sonsun, not acik)
 
     # ── Analiz ──────────────────────────────────────────────────────────────
 
     def _analiz_baslat(self):
         """Analizi arka planda (thread) baslatir."""
+        self._ip_yanip_sonme_iptal()
         self._btn_analiz.configure(state="disabled", text="  ⏳  Analiz ediliyor…")
         self._btn_excel.configure(state="disabled")
         self._rozet_guncelle("Çalışıyor", RENK["warning"])
@@ -586,6 +594,8 @@ class PCAnalizApp(ctk.CTk):
                                 if "Statik" in ir:
                                     self._ip_blink_aktif = True
                                     self._ip_kart_yanip_sonsun(acik=True)
+                                else:
+                                    self._ip_yanip_sonme_iptal()
                             self.after(0, up_ip)
                         elif name == "uyelik":
                             def up_uy(ur=res):
