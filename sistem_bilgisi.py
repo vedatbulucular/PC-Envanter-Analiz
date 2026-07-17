@@ -64,6 +64,21 @@ def cpu_bilgisi() -> dict:
         "Mevcut Frekans (MHz)"     : psutil.cpu_freq().current if psutil.cpu_freq() else "Bilinmiyor",
     }
 
+@with_com
+def islemci_modeli() -> str:
+    """Win32_Processor sınıfına bağlanarak işlemci detaylarını çeker."""
+    try:
+        c = wmi.WMI()
+        for islemci in c.Win32_Processor():
+            ad = getattr(islemci, "Name", "Bilinmiyor").strip()
+            cekirdek = getattr(islemci, "NumberOfCores", "?")
+            thread = getattr(islemci, "NumberOfLogicalProcessors", "?")
+            mimari = getattr(islemci, "AddressWidth", "?")
+            return f"{ad} ({mimari}-bit) - {cekirdek} Çekirdek / {thread} Thread"
+        return "Bilinmiyor"
+    except Exception as e:
+        return f"Hata Olustu: {str(e)}"
+
 def ram_bilgisi() -> dict:
     """Toplam, kullanılan ve boş RAM miktarını döndürür."""
     ram = psutil.virtual_memory()
@@ -80,15 +95,23 @@ def disk_bilgisi() -> list[dict]:
     for bolum in psutil.disk_partitions(all=False):
         try:
             kullanim = psutil.disk_usage(bolum.mountpoint)
+            toplam = bytes_to_gb(kullanim.total)
+            bos = bytes_to_gb(kullanim.free)
+            
+            # Guvenilir hesaplama:
+            kullanilan = round(toplam - bos, 2)
+            oran = round((kullanilan / toplam) * 100, 1) if toplam > 0 else 0.0
+
             disk_listesi.append({
                 "Bağlama Noktası"    : bolum.mountpoint,
                 "Dosya Sistemi"      : bolum.fstype,
-                "Toplam (GB)"        : bytes_to_gb(kullanim.total),
-                "Kullanılan (GB)"    : bytes_to_gb(kullanim.used),
-                "Boş (GB)"           : bytes_to_gb(kullanim.free),
-                "Doluluk Oranı (%)"  : kullanim.percent,
+                "Toplam (GB)"        : toplam,
+                "Kullanılan (GB)"    : kullanilan,
+                "Boş (GB)"           : bos,
+                "Doluluk Oranı (%)"  : oran,
             })
-        except PermissionError:
+        except Exception:
+            # Gizli, korumali veya okunmayan diskleri yoksay
             continue
     return disk_listesi
 
@@ -486,6 +509,7 @@ def excel_raporu_kaydet(
     ram: dict, cpu: dict, isletim_sistemi: dict, diskler: list[dict],
     programlar: dict, uyarilar: list[str], ip: str = "",
     ag_uyeligi_bilgi: str = "", eksik_suruculer: list = None,
+    islemci_adi: str = "",
     cikti_dizini: str = ".", dosya_adi: str = ""
 ) -> str:
     zaman_damgasi = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -503,7 +527,7 @@ def excel_raporu_kaydet(
         {"Kategori": "Isletim Sistemi",    "Bilgi": isletim_sistemi.get("Sistem", "")},
         {"Kategori": "OS Surumu",          "Bilgi": isletim_sistemi.get("Sürüm", "")},
         {"Kategori": "Mimari",             "Bilgi": isletim_sistemi.get("Mimari", "")},
-        {"Kategori": "Islemci",            "Bilgi": isletim_sistemi.get("İşlemci", "")},
+        {"Kategori": "Islemci Modeli",     "Bilgi": islemci_adi if islemci_adi else isletim_sistemi.get("İşlemci", "")},
         {"Kategori": "Fiziksel Cekirdek",  "Bilgi": cpu.get("Fiziksel Çekirdek Sayısı", "")},
         {"Kategori": "Mantiksal Cekirdek", "Bilgi": cpu.get("Mantıksal Çekirdek Sayısı", "")},
         {"Kategori": "CPU Kullanim (%)",   "Bilgi": cpu.get("Mevcut Kullanım (%)", "")},
@@ -526,9 +550,9 @@ def excel_raporu_kaydet(
     if diskler:
         for d in diskler:
             ws_disk.append([
-                d.get("Baglama Noktasi", ""), d.get("Dosya Sistemi", ""), 
-                d.get("Toplam (GB)", ""), d.get("Kullanilan (GB)", ""), 
-                d.get("Bos (GB)", ""), d.get("Doluluk Orani (%)", "")
+                d.get("Bağlama Noktası", ""), d.get("Dosya Sistemi", ""), 
+                d.get("Toplam (GB)", ""), d.get("Kullanılan (GB)", ""), 
+                d.get("Boş (GB)", ""), d.get("Doluluk Oranı (%)", "")
             ])
 
     ws_program = wb.create_sheet("Program Durumu")

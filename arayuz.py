@@ -48,6 +48,7 @@ from sistem_bilgisi import (
     sikistirma_araci_kurulu_mu,
     windows_lisans_durumu,
     eksik_surucu_kontrol,
+    islemci_modeli,
     standart_kontrol,
     excel_raporu_kaydet,
 )
@@ -89,7 +90,7 @@ FONT = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar, eksik_suruculer=None) -> str:
+def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar, eksik_suruculer=None, islemci_adi=None) -> str:
     """Analiz sonuclarini formatli metin olarak dondurur.
     Sadece program kontrolu, lisans ve ag/IP durumu gosterilir."""
     s = []
@@ -154,6 +155,8 @@ def _metni_olustur(ram, cpu, isletim, diskler, programlar, ip, uyelik, uyarilar,
     s.append(sep2)
     win_lisans = programlar.get("Windows Lisans", "Bilinmiyor")
     s.append(f"Windows Isletim Sistemi : {win_lisans}")
+    if islemci_adi:
+        s.append(f"İşlemci Modeli        : {islemci_adi}")
 
     # ── AG / IP DURUMU
     s.append("")
@@ -219,7 +222,16 @@ class OzetKart(ctk.CTkFrame):
             ic, text="", font=("Segoe UI", 10),
             text_color=RENK["text_dim"], anchor="w", justify="left"
         )
-        self._alt_lbl.pack(anchor="w", pady=(2, 0))
+        self._alt_lbl.pack(anchor="w", fill="x", pady=(2, 0))
+
+        # Responsive metin kaydirma (wraplength)
+        def _wrap_guncelle(event):
+            genislik = event.width - 5
+            if genislik > 20:
+                self._alt_lbl.configure(wraplength=genislik)
+                self._deger_lbl.configure(wraplength=genislik)
+                
+        ic.bind("<Configure>", _wrap_guncelle)
 
     def guncelle(self, deger: str):
         self._deger_lbl.configure(text=deger)
@@ -321,7 +333,7 @@ class PCAnalizApp(ctk.CTk):
         self._kart_bilgisayar.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
         self._kart_ram = OzetKart(
-            kart_satiri, "Toplam RAM", renk=RENK["green"])
+            kart_satiri, "RAM & İşlemci", renk=RENK["green"])
         self._kart_ram.grid(row=0, column=1, sticky="ew", padx=5)
 
         self._kart_disk = OzetKart(
@@ -562,9 +574,10 @@ class PCAnalizApp(ctk.CTk):
         if _PYTHONCOM:
             pythoncom.CoInitialize()
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
                 futures = {
                     executor.submit(ram_bilgisi): "ram",
+                    executor.submit(islemci_modeli): "islemci",
                     executor.submit(cpu_bilgisi): "cpu",
                     executor.submit(isletim_sistemi_bilgisi): "os",
                     executor.submit(disk_bilgisi): "disk",
@@ -590,6 +603,11 @@ class PCAnalizApp(ctk.CTk):
                         
                         if name == "ram":
                             self.after(0, lambda r=res: self._kart_ram.guncelle(f"{r.get('Toplam RAM (GB)', '?')} GB"))
+                        elif name == "islemci":
+                            ui_text = res.replace(" - ", "\n")
+                            self.after(0, lambda t=ui_text: self._kart_ram._alt_lbl.configure(
+                                text=t, text_color="white", font=("Segoe UI", 13, "bold")
+                            ))
                         elif name == "disk":
                             dy = next((d["Doluluk Oranı (%)"] for d in res if d["Bağlama Noktası"] == "C:\\"), 0.0)
                             dr = RENK["danger"] if dy > 85 else RENK["warning"] if dy > 70 else RENK["green"]
@@ -654,9 +672,11 @@ class PCAnalizApp(ctk.CTk):
             self._son_ip         = results.get("ip", "")
             self._son_uyelik     = results.get("uyelik", "")
             self._son_uyarilar   = uyarilar
+            self._son_suruculer  = results.get("suruculer", [])
+            self._son_islemci    = results.get("islemci", "")
             self._analiz_yapildi = True
 
-            metin = _metni_olustur(self._son_ram, self._son_cpu, self._son_isletim, self._son_diskler, programlar, self._son_ip, self._son_uyelik, uyarilar, results.get("suruculer", []))
+            metin = _metni_olustur(self._son_ram, self._son_cpu, self._son_isletim, self._son_diskler, programlar, self._son_ip, self._son_uyelik, uyarilar, self._son_suruculer, self._son_islemci)
             self.after(0, self._analiz_bitti_guncelle, metin, uyarilar)
             
         except Exception as hata:
@@ -734,6 +754,8 @@ class PCAnalizApp(ctk.CTk):
                 uyarilar         = self._son_uyarilar,
                 ip               = self._son_ip,
                 ag_uyeligi_bilgi = self._son_uyelik,
+                eksik_suruculer  = getattr(self, "_son_suruculer", []),
+                islemci_adi      = getattr(self, "_son_islemci", ""),
             )
             self.after(0, self._excel_bitti, yol)
         except Exception as hata:
